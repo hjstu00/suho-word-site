@@ -1,0 +1,12 @@
+{
+  "name": "수호의 낱말 공사장",
+  "short_name": "낱말 공사장",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#7cc8f8",
+  "theme_color": "#7cc8f8",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
