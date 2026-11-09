@@ -377,7 +377,7 @@ function meaning(i) {
     <div class="bar"><button class="btn icon list" aria-label="${UI[lang].list}">🏠</button>
       <span class="spacer"><button class="word-btn" aria-label="${esc(row[1])} ${UI[lang].again}">${esc(row[1])}</button></span>
       <button class="btn icon replay" aria-label="${UI[lang].replay}">↻</button></div>
-    <div class="stage">${pic(row)}<div class="cheer awake" aria-hidden="true">${friends(lang === 'ko' ? row[1] : row[1].toLowerCase(), 'dance')}</div>
+    <div class="stage">${pic(row)}<div class="cheer" aria-hidden="true">${friends(lang === 'ko' ? row[1] : row[1].toLowerCase(), 'dance')}</div>
       <p class="sentence">${esc(row[4])}</p></div>
     <button class="btn next-arrow" aria-label="${UI[lang].next}">▶</button></section>`;
   app.querySelector('.list').onclick = picker;

@@ -213,7 +213,7 @@ button:focus-visible { outline: 4px solid var(--focus); outline-offset: 4px; }
 .stage .pic { width: min(320px, 34vh); aspect-ratio: 1; border-radius: 32px; border: var(--bw) solid var(--ink); box-shadow: var(--lift); animation: drive-in .9s cubic-bezier(.3, 1.3, .5, 1) both, bob 2.4s ease-in-out .9s infinite; }
 @keyframes drive-in { from { transform: translateX(-80vw) rotate(-8deg); } }
 @keyframes bob { 50% { transform: translateY(-12px) rotate(-2deg); } }
-.cheer { font-size: min(90px, 10vh); display: flex; gap: .15em; padding-top: .5em; }
+.cheer { font-size: min(90px, 10vh); display: flex; gap: .15em; } /* 뜻 화면 글자는 눈 없이 (그림 캐릭터에 이미 눈이 있음) */
 .sentence { margin: 0; max-width: min(900px, calc(100% - 240px)); text-align: center; font-size: clamp(26px, 3.6vh, 38px); line-height: 1.4; }
 .next-arrow {
   position: fixed;
