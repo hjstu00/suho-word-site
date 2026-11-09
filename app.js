@@ -1,20 +1,16 @@
-// 수호의 낱말 공사장 — 화면 4개: 홈 → 낱말 고르기 → 퍼즐 → 뜻
+// 수호의 글자 친구들 — 화면 4개: 시작 → 낱말 고르기(첫 글자 줄 + 가로 카드) → 퍼즐(글자 틀) → 뜻
+// 퍼즐 조각 규칙(한글 음절·자모, 영어 파닉스)은 rules.js
+import { slug, initial, units, INDEX } from './rules.js';
+
 const app = document.getElementById('app');
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const TITLE = '수호의 글자 친구들';
 const UI = {
-  ko: { stages: ['중장비', '두 글자', '세 글자', '받침'], list: '목록', next: '다음 ▶' },
-  en: { stages: ['Machines', 'Short', 'Blends', 'Big words'], list: 'List', next: 'Next ▶' },
+  ko: { home: '처음으로', list: '낱말 고르기', again: '다시 듣기', next: '다음 낱말', index: '첫 글자', replay: '다시 보기' },
+  en: { home: 'Start', list: 'Words', again: 'Listen again', next: 'Next word', index: 'First letter', replay: 'Watch again' },
 };
-let DATA, lang = 'ko', stage = 1, scene = 0, greeted = false;
-
-// ---- 낱말·파일 이름 (tools/make_audio.py와 같은 규칙) ----
-export const slug = (l, t) => l === 'ko'
-  ? [...t].map(c => c.codePointAt(0).toString(16)).join('-')
-  : t.toLowerCase().replaceAll(' ', '_');
-export const pieces = (l, w) => l === 'ko'
-  ? [...w].filter(c => !' -'.includes(c))
-  : [...w.toLowerCase()].filter(c => c >= 'a' && c <= 'z');
-const pieceFile = (l, p) => l === 'ko' ? `ko/${slug('ko', p)}.wav` : `en/letter-${p}.wav`;
+const HINT_MS = 7000; // 가만히 있으면 이만큼 뒤 글자 하나가 통통 튀며 부른다
+let DATA, SOUNDS, lang = 'ko', scene = 0, order = [], lastI = null, greeted = false;
 
 // ---- 소리: 녹음 파일, 없으면 기기 음성 ----
 const player = new Audio();
@@ -25,7 +21,7 @@ function stopAudio() {
   finishCurrent?.(false);
 }
 function speak(text, l, finish) {
-  if (!('speechSynthesis' in window)) return finish(true);
+  if (!text || !('speechSynthesis' in window)) return finish(true);
   const u = new SpeechSynthesisUtterance(text);
   u.lang = l === 'ko' ? 'ko-KR' : 'en-US';
   u.rate = 0.9;
@@ -50,11 +46,35 @@ function play(path, text, l = lang) {
     player.play().catch(e => { if (e.name === 'NotAllowedError') speak(text, l, finish); });
   });
 }
+// 짧은 효과음: 녹음 없이 브라우저에서 합성 [주파수, 시작초, 길이초]
+let actx;
+const SFX = {
+  nope: [[392, 0, .16], [311, .14, .32]],
+  cheer: [[523, 0, .14], [659, .11, .14], [784, .22, .14], [1047, .33, .4]],
+  pop: [[880, 0, .08]], // 소리 없는 글자(묵음 e)
+};
+function sfx(notes) {
+  try {
+    actx ||= new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = actx.currentTime;
+    for (const [f, s, d] of notes) {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'triangle';
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0 + s);
+      g.gain.exponentialRampToValueAtTime(0.25, t0 + s + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + s + d);
+      o.connect(g).connect(actx.destination);
+      o.start(t0 + s);
+      o.stop(t0 + s + d + 0.05);
+    }
+  } catch { /* 효과음은 없어도 진행 */ }
+}
 const sayWord = w => play(`${lang}/${slug(lang, w)}.wav`, w);
-const sayPiece = p => play(pieceFile(lang, p), p);
 const sayPhrase = k => play(`${lang}/p-${k}.wav`, DATA.phrases[lang][k]);
+const saySnd = snd => snd.path ? play(snd.path, snd.text) : (stopAudio(), sfx(SFX.pop), wait(250));
 
-// ---- 진도 ----
+// ---- 진도 (예전 낱말 공사장 앱과 같은 키라 iPad에 남은 ✓를 이어 쓴다) ----
 const doneKey = () => `suho-done-${lang}`;
 function doneSet() {
   try { return new Set(JSON.parse(localStorage.getItem(doneKey()) || '[]')); } catch { return new Set(); }
@@ -65,178 +85,220 @@ function markDone(word) {
   try { localStorage.setItem(doneKey(), JSON.stringify([...s])); } catch { /* 저장 못 해도 계속 */ }
 }
 
-const pic = (row, cls) => row[3]
-  ? `<img class="pic ${cls}" src="img/${row[3]}" alt="">`
-  : `<span class="pic emoji ${cls}" aria-hidden="true">${row[2]}</span>`;
 const esc = s => s.replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`);
+const pic = row => row[3]
+  ? `<img class="pic" src="img/${row[3]}" alt="">`
+  : `<span class="pic emoji" aria-hidden="true">${row[2]}</span>`;
+const friends = (text, cls = '') => [...text].map((c, k) => c === ' '
+  ? '<span class="gap"></span>'
+  : `<span class="friend c${k % 6} ${cls}" style="--d:${k}">${esc(c)}</span>`).join('');
+const wait = ms => new Promise(r => setTimeout(r, ms));
 const newScene = () => { stopAudio(); return ++scene; };
 
-// ---- S01 홈 ----
-function home() {
+// ---- S01 시작 ----
+function intro() {
   newScene();
-  app.innerHTML = `<section class="screen home">
-    <h1>수호의 낱말 공사장</h1>
-    <img class="hero bob" src="img/excavator.jpg" alt="포크레인 제이커">
+  const imgs = ['excavator', 'bulldozer', 'loader', 'forklift', 'tower-crane', 'dump-truck', 'roller'];
+  app.innerHTML = `<section class="screen intro">
+    <h1 class="title awake" aria-label="${TITLE}">${friends(TITLE, 'dance')}</h1>
+    <div class="parade" aria-hidden="true"><div class="parade-track">${imgs.map(n => `<img src="img/${n}.jpg" alt="">`).join('')}</div></div>
     <div class="row">
-      <button class="clay big" data-lang="ko">한글</button>
-      <button class="clay big alt" data-lang="en">English</button>
+      <button class="btn big" data-lang="ko">한글</button>
+      <button class="btn big alt" data-lang="en">English</button>
     </div></section>`;
   app.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => {
     lang = b.dataset.lang;
     document.documentElement.lang = lang;
-    stage = 1;
-    pick();
+    order = DATA[lang].map((_, i) => i).sort((a, b) => DATA[lang][a][1].localeCompare(DATA[lang][b][1], lang));
+    lastI = null;
+    picker();
     sayPhrase(greeted ? 'pick' : 'hello');
     greeted = true;
   });
 }
 
-// ---- S02 낱말 고르기 ----
-function pick() {
+// ---- S02 낱말 고르기: 첫 글자 줄 + 가로로 넘기는 카드 ----
+function picker() {
   newScene();
   const done = doneSet();
-  const rows = DATA[lang].map((r, i) => [r, i]).filter(([r]) => r[0] === stage);
-  app.innerHTML = `<section class="screen">
+  const have = new Set(order.map(i => initial(lang, DATA[lang][i][1])));
+  app.innerHTML = `<section class="screen picker">
     <div class="bar">
-      <button class="clay icon home-btn" aria-label="처음으로">🏠</button>
-      <div class="tabs" role="group">${UI[lang].stages.map((t, k) =>
-        `<button class="clay tab" data-stage="${k + 1}" aria-pressed="${k + 1 === stage}">${k + 1}. ${t}</button>`).join('')}
-      </div>
+      <button class="btn icon home" aria-label="${UI[lang].home}">🏠</button>
+      <nav class="index" aria-label="${UI[lang].index}">${INDEX[lang].map(ch =>
+        `<button class="idx" data-ch="${ch}" ${have.has(ch) ? '' : 'disabled'}>${ch}</button>`).join('')}</nav>
     </div>
-    <div class="grid">${rows.map(([r, i]) => `
-      <button class="clay card" data-i="${i}" aria-label="${esc(r[1])}">
-        ${pic(r, '')}<span class="label">${esc(r[1])}</span>
-        ${done.has(r[1]) ? '<span class="done-mark" aria-label="완성">✓</span>' : ''}
-      </button>`).join('')}
-    </div></section>`;
-  app.querySelector('.home-btn').onclick = home;
-  app.querySelectorAll('[data-stage]').forEach(b => b.onclick = () => { stage = +b.dataset.stage; pick(); });
-  app.querySelectorAll('[data-i]').forEach(b => b.onclick = () => puzzle(+b.dataset.i));
+    <div class="belt" role="list">${order.map(i => {
+      const r = DATA[lang][i];
+      return `<button class="btn card" role="listitem" data-i="${i}" data-ini="${initial(lang, r[1])}" aria-label="${esc(r[1])}">
+        ${pic(r)}<span class="label">${esc(r[1])}</span>
+        ${done.has(r[1]) ? '<span class="done" aria-label="완성">✓</span>' : ''}</button>`;
+    }).join('')}</div></section>`;
+  const belt = app.querySelector('.belt');
+  const cards = [...belt.children];
+  const idxs = [...app.querySelectorAll('.idx')];
+  const centerOf = card => card.offsetLeft + card.offsetWidth / 2 - belt.clientWidth / 2;
+  const mark = () => { // 가운데 카드의 첫 글자를 줄에서 표시
+    const mid = belt.scrollLeft + belt.clientWidth / 2;
+    const c = cards.find(x => x.offsetLeft + x.offsetWidth > mid) || cards.at(-1);
+    idxs.forEach(b => b.setAttribute('aria-current', String(b.dataset.ch === c.dataset.ini)));
+  };
+  let ticking = false;
+  belt.onscroll = () => { if (!ticking) { ticking = true; requestAnimationFrame(() => { ticking = false; mark(); }); } };
+  app.querySelector('.home').onclick = intro;
+  idxs.forEach(b => b.onclick = () => {
+    const c = cards.find(x => x.dataset.ini === b.dataset.ch);
+    belt.scrollTo({ left: centerOf(c), behavior: reduced ? 'auto' : 'smooth' });
+  });
+  cards.forEach(c => c.onclick = () => puzzle(+c.dataset.i));
+  const back = cards.find(c => +c.dataset.i === lastI);
+  if (back) belt.scrollLeft = centerOf(back);
+  mark();
 }
 
-// ---- S03 퍼즐 ----
+// ---- S03 퍼즐: 낱말 모양 글자 틀 + 위아래로 흩어진 글자 친구 ----
+// 한글은 음절 블록 또는 자모(초성·중성·종성 칸이 다 차면 음절로 합쳐짐), 영어는 글자마다 파닉스 소리
 function puzzle(i) {
   const my = newScene();
+  lastI = i;
   const row = DATA[lang][i], word = row[1];
-  const ps = pieces(lang, word);
-  const shown = lang === 'ko' ? [...word] : [...word.toLowerCase()];
-  const units = ps.length + shown.filter(c => c === ' ' || c === '-').length * 0.4;
-  const s = Math.round(Math.max(56, Math.min(120, (Math.min(innerWidth, 1100) - 40) / units - 10)));
-  app.innerHTML = `<section class="screen puzzle" style="--s:${s}px">
-    <div class="bar"><button class="clay icon back" aria-label="${UI[lang].list}">◀</button>
-      <button class="clay icon again" aria-label="다시 듣기">🔊</button></div>
-    <div class="target">${pic(row, 'pz-pic')}
-      <div class="slots">${shown.map(c => c === ' ' ? '<span class="gap"></span>'
-        : c === '-' ? '<span class="fixed">-</span>'
-        : `<span class="slot" data-ch="${esc(c)}"></span>`).join('')}</div>
-    </div>
-    <div class="yard"></div>
-    <img class="truck" src="img/dump-truck.jpg" alt=""></section>`;
-  const yard = app.querySelector('.yard'), slotsEl = app.querySelector('.slots');
-  const slots = [...app.querySelectorAll('.slot')];
-  app.querySelector('.back').onclick = pick;
+  const { mode, tokens } = units(lang, row, SOUNDS);
+  const per = mode === 'letter' ? 0.62 : 1.05;
+  const width = tokens.reduce((a, t) => a + (t.sep ? 0.4 : per), 0);
+  const tall = mode === 'jamo' ? 5 : 4.2; // 자모 틀은 두세 줄이라 더 낮춘다
+  const fs = Math.round(Math.max(60, Math.min(230, (Math.min(innerWidth, 1200) - 60) / width, (innerHeight - 150) / tall)));
+  const ps = mode === 'jamo' ? Math.round(fs * 0.7) : fs; // 조각 글자 크기 (자모는 틀보다 조금 크게)
+  const slotHtml = (ch, k, p = '', role = '') =>
+    `<span class="slot ${role}" data-ch="${esc(ch)}" data-k="${k}" data-p="${p}">${esc(ch)}</span>`;
+  app.innerHTML = `<section class="screen puzzle ${mode}" style="--fs:${fs}px;--ps:${ps}px">
+    <div class="bar">
+      <button class="btn icon back" aria-label="${UI[lang].list}">◀</button><span class="spacer"></span>
+      <button class="btn icon again" aria-label="${UI[lang].again}">🔊</button></div>
+    <div class="yard top"></div>
+    <div class="stencil" aria-label="${esc(word)}">${tokens.map((t, k) => t.sep
+      ? (t.sep === ' ' ? '<span class="gap"></span>' : `<span class="fixed">${esc(t.sep)}</span>`)
+      : t.parts ? `<span class="syl ${t.layout}" data-k="${k}">${t.parts.map((p, n) => slotHtml(p.ch, k, n, p.role)).join('')}</span>`
+      : slotHtml(t.ch, k)).join('')}</div>
+    <div class="yard bottom"></div></section>`;
+  const stencil = app.querySelector('.stencil');
+  const slots = [...stencil.querySelectorAll('.slot')];
+  const yards = [...app.querySelectorAll('.yard')];
+  const sndOf = el => el.dataset.p === '' ? tokens[el.dataset.k].snd : tokens[el.dataset.k].parts[el.dataset.p].snd;
+  app.querySelector('.back').onclick = picker;
   app.querySelector('.again').onclick = () => sayWord(word);
-  let chosen = null, toldAgain = false;
+  let chosen = null, toldAgain = false, finished = false;
 
-  // 조각 놓을 자리: 서로 덜 겹치게 무작위
-  const W = yard.clientWidth, H = yard.clientHeight, spots = [];
-  for (const _ of ps) {
+  // 조각: 글자(또는 자모)마다 하나. 위아래 마당에 번갈아, 서로 덜 겹치게
+  const bits = tokens.flatMap((t, k) => t.sep ? [] : t.parts ? t.parts.map(p => ({ ch: p.ch, snd: p.snd })) : [{ ch: t.ch, snd: t.snd }]);
+  const shuffled = bits.map((b, k) => ({ ...b, k, r: Math.random() })).sort((a, b) => a.r - b.r);
+  const taken = [[], []];
+  const els = shuffled.map((bit, n) => {
+    const yard = yards[n % 2];
+    const b = document.createElement('button');
+    b.className = `friend piece c${bit.k % 6}`;
+    b.textContent = bit.ch;
+    b.dataset.ch = bit.ch;
+    b.snd = bit.snd;
+    b.setAttribute('aria-label', bit.ch);
+    yard.append(b);
+    const W = Math.max(0, yard.clientWidth - b.offsetWidth), H = Math.max(0, yard.clientHeight - b.offsetHeight);
     let best = null;
     for (let t = 0; t < 60; t++) {
-      const p = { x: Math.random() * Math.max(0, W - s), y: Math.random() * Math.max(0, H - s - 70) };
-      const d = Math.min(...spots.map(q => Math.hypot(q.x - p.x, q.y - p.y)), Infinity);
-      if (!best || d > best.d) best = { ...p, d };
-      if (d > s * 1.3) break;
+      const q = { x: Math.random() * W, y: Math.random() * H };
+      const d = Math.min(...taken[n % 2].map(o => Math.hypot(o.x - q.x, o.y - q.y)), Infinity);
+      if (!best || d > best.d) best = { ...q, d };
+      if (d > b.offsetWidth * 1.4) break;
     }
-    spots.push(best);
-  }
-  const order = ps.map((p, k) => ({ p, k: Math.random() })).sort((a, b) => a.k - b.k).map(o => o.p);
-  const els = order.map((p, k) => {
-    const b = document.createElement('button');
-    b.className = `clay piece c${k % 6}`;
-    b.textContent = p;
-    b.dataset.ch = p;
-    b.setAttribute('aria-label', p);
-    b.style.left = `${spots[k].x}px`;
-    b.style.top = `${spots[k].y}px`;
-    b.style.opacity = '0';
-    yard.append(b);
+    taken[n % 2].push(best);
+    b.style.left = `${best.x}px`;
+    b.style.top = `${best.y}px`;
     return b;
   });
 
-  const ready = () => els.forEach(b => wire(b));
+  // 시작: 낱말을 읽어 주고, 글자 친구들이 양옆에서 달려 들어온다
+  els.forEach((b, n) => { b.style.transition = 'none'; b.style.transform = `translateX(${n % 2 ? '' : '-'}110vw)`; });
   (async () => {
+    await wait(50);
+    els.forEach((b, n) => {
+      b.style.transition = `transform .8s cubic-bezier(.3, 1.2, .5, 1) ${n * 0.09}s`;
+      b.style.transform = '';
+    });
     await sayWord(word);
     if (scene !== my) return;
-    const truck = app.querySelector('.truck');
-    if (reduced) { els.forEach(b => (b.style.opacity = '1')); truck.remove(); ready(); return; }
-    // 덤프트럭이 와서 조각을 쏟고 간다
-    const yr = yard.getBoundingClientRect();
-    truck.style.top = `${yr.top - app.getBoundingClientRect().top + 10}px`;
-    const stopX = -(innerWidth / 2 + truck.offsetWidth / 2);
-    truck.style.transform = `translateX(${stopX}px)`;
-    await wait(1100);
-    if (scene !== my) return;
-    const tr = truck.getBoundingClientRect();
-    els.forEach((b, k) => {
-      const r = b.getBoundingClientRect();
-      b.style.transition = 'none';
-      b.style.transform = `translate(${tr.left + tr.width / 2 - r.left - s / 2}px, ${tr.top + tr.height / 2 - r.top - s / 2}px) scale(.2)`;
-      b.offsetWidth;
-      b.style.transition = `transform .6s cubic-bezier(.3,1.4,.5,1) ${k * 0.08}s, opacity .2s ${k * 0.08}s`;
-      b.style.transform = '';
-      b.style.opacity = '1';
-    });
-    await wait(600 + els.length * 80);
-    els.forEach(b => (b.style.transition = ''));
-    truck.style.transform = `translateX(${-innerWidth - truck.offsetWidth - 40}px)`;
-    ready();
-    await wait(1200);
-    truck.remove();
+    els.forEach(b => { b.style.transition = ''; wire(b); });
+    poke();
   })();
 
-  function emptySlot(ch, x, y) { // (x, y) 근처의 빈 같은 글자 칸
+  // 힌트: 한동안 손대지 않으면 남은 글자 하나가 눈을 뜨고 튄다
+  let idle = 0;
+  function poke() { clearTimeout(idle); idle = setTimeout(hint, HINT_MS); }
+  function hint() {
+    if (scene !== my || finished) return;
+    const left = els.filter(b => b.isConnected && !b.disabled && !b.classList.contains('dragging') && !b.classList.contains('chosen'));
+    const b = left[Math.floor(Math.random() * left.length)];
+    if (b) {
+      wake(b, true);
+      b.classList.remove('hint'); b.offsetWidth; b.classList.add('hint');
+      setTimeout(() => { if (!b.classList.contains('chosen') && !b.classList.contains('dragging')) wake(b, false); }, 1300);
+    }
+    poke();
+  }
+  app.querySelector('.puzzle').addEventListener('pointerdown', poke);
+
+  function wake(b, on) {
+    b.classList.toggle('awake', on);
+    if (on) { b.style.animation = 'none'; b.offsetWidth; b.style.animation = ''; }
+  }
+  function choose(b) {
+    if (chosen) { chosen.classList.remove('chosen'); wake(chosen, false); }
+    chosen = b === chosen ? null : b;
+    if (chosen) { chosen.classList.add('chosen'); wake(chosen, true); saySnd(chosen.snd); }
+    stencil.classList.toggle('choosing', !!chosen);
+  }
+  const centre = el => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  function nearest(x, y, test) {
     let best = null;
     for (const sl of slots) {
-      if (sl.classList.contains('filled') || sl.dataset.ch !== ch) continue;
-      const r = sl.getBoundingClientRect();
-      const d = Math.hypot(r.left + r.width / 2 - x, r.top + r.height / 2 - y);
-      if (d < s * 0.9 && (!best || d < best.d)) best = { sl, d };
+      if (sl.classList.contains('filled') || !test(sl)) continue;
+      const [cx, cy] = centre(sl), d = Math.hypot(cx - x, cy - y);
+      if (d < ps * 0.8 && (!best || d < best.d)) best = { sl, d };
     }
     return best?.sl;
   }
-  function nearAnySlot(x, y) {
-    return slots.some(sl => { const r = sl.getBoundingClientRect(); return Math.hypot(r.left + r.width / 2 - x, r.top + r.height / 2 - y) < s * 0.9; });
-  }
-  function choose(b) {
-    chosen?.classList.remove('chosen');
-    chosen = b === chosen ? null : b;
-    chosen?.classList.add('chosen');
-    slotsEl.classList.toggle('choosing', !!chosen);
-  }
   function nope(el) {
     el.classList.remove('shake'); el.offsetWidth; el.classList.add('shake');
+    sfx(SFX.nope);
     if (!toldAgain) { toldAgain = true; sayPhrase('again'); }
   }
   function place(b, sl) {
-    choose(null);
-    const a = b.getBoundingClientRect();
-    b.classList.add('placed');
-    b.style.left = b.style.top = b.style.transform = '';
-    sl.append(b);
-    sl.classList.add('filled');
-    const c = b.getBoundingClientRect();
-    b.style.transition = 'none';
-    b.style.transform = `translate(${a.left - c.left}px, ${a.top - c.top}px)`;
-    b.offsetWidth;
-    b.style.transition = '';
-    b.style.transform = '';
+    if (chosen === b) choose(null);
+    const [bx, by] = centre(b), [sx, sy] = centre(sl);
+    const colour = [...b.classList].find(c => /^c\d$/.test(c));
     b.disabled = true;
+    b.style.transition = 'transform .25s ease-out';
+    b.style.transform = `translate(${sx - bx + (parseFloat(b.dataset.dx) || 0)}px, ${sy - by + (parseFloat(b.dataset.dy) || 0)}px)`;
+    sl.classList.add('filled', colour);
+    sl.style.color = 'transparent';
+    setTimeout(() => { b.remove(); sl.style.color = ''; sl.classList.add('hop'); }, 250);
+    // 자모: 한 음절의 칸이 다 차면 음절 글자로 합쳐지며 음절을 읽는다
+    const syl = sl.closest('.syl');
+    const whole = syl && [...syl.children].every(x => x.classList.contains('filled'));
+    if (whole) setTimeout(() => compose(syl, colour), 300);
     if (slots.every(x => x.classList.contains('filled'))) complete();
-    else sayPiece(b.dataset.ch);
+    else saySnd(whole ? tokens[syl.dataset.k].snd : sndOf(sl));
+  }
+  function compose(syl, colour) {
+    if (!syl.isConnected) return;
+    const t = tokens[syl.dataset.k];
+    const one = document.createElement('span');
+    one.className = `slot filled composed ${colour} hop`;
+    one.dataset.k = syl.dataset.k;
+    one.dataset.p = '';
+    one.textContent = t.ch;
+    syl.replaceWith(one);
   }
   function wire(b) {
-    b.onclick = () => { if (!b.classList.contains('placed')) { choose(b); sayPiece(b.dataset.ch); } };
+    b.onclick = () => { if (!b.disabled) choose(b); };
     b.onkeydown = e => { // 키보드: Enter·Space는 맞는 칸에 바로
       if (e.key !== 'Enter' && e.key !== ' ') return;
       e.preventDefault();
@@ -244,15 +306,16 @@ function puzzle(i) {
       if (sl) place(b, sl);
     };
     b.onpointerdown = e => {
-      if (b.classList.contains('placed') || e.button > 0) return;
+      if (b.disabled || e.button > 0) return;
       const sx = e.clientX, sy = e.clientY;
       let moved = false;
       b.setPointerCapture(e.pointerId);
       const move = ev => {
         const dx = ev.clientX - sx, dy = ev.clientY - sy;
         if (!moved && Math.hypot(dx, dy) < 12) return;
-        if (!moved) { moved = true; b.classList.add('dragging'); choose(null); sayPiece(b.dataset.ch); }
-        b.style.transform = `translate(${dx}px, ${dy}px) scale(1.1)`;
+        if (!moved) { moved = true; choose(null); b.classList.add('dragging'); wake(b, true); saySnd(b.snd); }
+        b.dataset.dx = dx; b.dataset.dy = dy;
+        b.style.transform = `translate(${dx}px, ${dy}px) scale(1.12)`;
       };
       const up = ev => {
         b.removeEventListener('pointermove', move);
@@ -261,12 +324,14 @@ function puzzle(i) {
         if (!moved) return; // 눌렀다 뗀 것은 click이 처리
         b.classList.remove('dragging');
         b.onclick = null;
-        setTimeout(() => wire(b), 0); // 끌기 뒤 따라오는 click 무시
-        const r = b.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
-        const sl = emptySlot(b.dataset.ch, x, y);
-        if (sl) return place(b, sl);
+        setTimeout(() => { if (!b.disabled) b.onclick = () => choose(b); }, 0); // 끌기 뒤 따라오는 click 무시
+        const [x, y] = centre(b);
+        const sl = nearest(x, y, s => s.dataset.ch === b.dataset.ch);
+        if (sl) { b.style.transform = `translate(${b.dataset.dx}px, ${b.dataset.dy}px)`; return place(b, sl); }
+        b.dataset.dx = b.dataset.dy = 0;
         b.style.transform = '';
-        if (ev.type === 'pointerup' && nearAnySlot(x, y)) nope(b);
+        wake(b, false);
+        if (ev.type === 'pointerup' && nearest(x, y, () => true)) nope(b);
       };
       b.addEventListener('pointermove', move);
       b.addEventListener('pointerup', up);
@@ -279,54 +344,71 @@ function puzzle(i) {
     else nope(sl);
   });
 
+  // 완성: 환호 → 글자(음절)마다 뛰며 소리 → 낱말 (영어는 k-a-t, cat 처럼 소리를 이어 읽는 연습)
   async function complete() {
-    await wait(350);
-    for (const sl of slots) {
+    if (finished) return;
+    finished = true;
+    clearTimeout(idle);
+    await wait(300);
+    sfx(SFX.cheer);
+    await wait(700);
+    stencil.classList.add('awake');
+    for (const [k, t] of tokens.entries()) {
+      if (t.sep) continue;
       if (scene !== my) return;
-      const b = sl.firstElementChild;
-      b.classList.remove('hop'); b.offsetWidth; b.classList.add('hop');
-      await sayPiece(b.dataset.ch);
+      const el = stencil.querySelector(`.slot[data-k="${k}"][data-p=""]`) || stencil.querySelector(`.syl[data-k="${k}"]`);
+      el.classList.add('friend');
+      el.classList.remove('hop'); el.offsetWidth; el.classList.add('hop');
+      await saySnd(t.snd);
     }
     if (scene !== my) return;
-    await sayWord(word);
+    if (tokens.filter(t => !t.sep).length > 1 || lang === 'en') await sayWord(word); // 한 음절 낱말(곰)은 방금 읽었다
     if (scene !== my) return;
     markDone(word);
     meaning(i);
   }
 }
 
-// ---- S04 뜻 ----
+// ---- S04 뜻: 낱말 + 그림이 달려 들어오고 글자 친구들이 춤춘다 ----
 function meaning(i) {
   const my = newScene();
   const row = DATA[lang][i];
   app.innerHTML = `<section class="screen meaning">
-    <div class="clay mean-card">${pic(row, '')}
-      <button class="mean-word" aria-label="${esc(row[1])} 다시 듣기">${esc(row[1])}</button>
+    <div class="bar"><button class="btn icon list" aria-label="${UI[lang].list}">🏠</button>
+      <span class="spacer"><button class="word-btn" aria-label="${esc(row[1])} ${UI[lang].again}">${esc(row[1])}</button></span>
+      <button class="btn icon replay" aria-label="${UI[lang].replay}">↻</button></div>
+    <div class="stage">${pic(row)}<div class="cheer awake" aria-hidden="true">${friends(lang === 'ko' ? row[1] : row[1].toLowerCase(), 'dance')}</div>
       <p class="sentence">${esc(row[4])}</p></div>
-    <div class="row">
-      <button class="clay big list">${UI[lang].list}</button>
-      <button class="clay big alt next">${UI[lang].next}</button>
-    </div></section>`;
-  app.querySelector('.list').onclick = pick;
-  app.querySelector('.next').onclick = () => {
-    const n = (i + 1) % DATA[lang].length;
-    stage = DATA[lang][n][0];
-    puzzle(n);
+    <button class="btn next-arrow" aria-label="${UI[lang].next}">▶</button></section>`;
+  app.querySelector('.list').onclick = picker;
+  app.querySelector('.word-btn').onclick = () => sayWord(row[1]);
+  const next = () => puzzle(order[(order.indexOf(i) + 1) % order.length]);
+  const sentence = () => play(`${lang}/${slug(lang, row[1])}-s.wav`, row[4]);
+  app.querySelector('.sentence').onclick = sentence;
+  app.querySelector('.next-arrow').onclick = next;
+  app.querySelector('.replay').onclick = () => { // 그림 등장부터 다시
+    const p = app.querySelector('.stage .pic');
+    p.style.animation = 'none'; p.offsetWidth; p.style.animation = '';
+    sentence();
   };
-  app.querySelector('.mean-card').onclick = () => play(`${lang}/${slug(lang, row[1])}-s.wav`, row[4]);
-  app.querySelector('.mean-word').onclick = e => { e.stopPropagation(); sayWord(row[1]); };
+  // 밀기: 왼쪽으로 밀면 다음 낱말, 오른쪽으로 밀면 낱말 고르기
+  const screen = app.querySelector('.meaning');
+  let sx = null;
+  screen.onpointerdown = e => { sx = e.target.closest('button') ? null : e.clientX; };
+  screen.onpointerup = e => {
+    if (sx === null) return;
+    const dx = e.clientX - sx;
+    sx = null;
+    if (dx < -60) next(); else if (dx > 60) picker();
+  };
   (async () => {
     await sayPhrase('great');
-    if (scene === my) play(`${lang}/${slug(lang, row[1])}-s.wav`, row[4]);
+    if (scene === my) sentence();
   })();
 }
 
-const wait = ms => new Promise(r => setTimeout(r, ms));
-
-DATA = await (await fetch('words.json')).json();
-// 파일 이름 규칙 자체 검사 (make_audio.py check()와 같은 값)
-console.assert(slug('ko', '기차') === 'ae30-cc28' && pieces('en', 'Yo-yo').join('') === 'yoyo', 'slug/pieces 규칙 불일치');
-home();
+[DATA, SOUNDS] = await Promise.all(['words.json', 'sounds.json'].map(async f => (await fetch(f)).json()));
+intro();
 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js');
