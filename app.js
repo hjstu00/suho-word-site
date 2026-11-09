@@ -301,7 +301,7 @@ function meaning(i) {
   const row = DATA[lang][i];
   app.innerHTML = `<section class="screen meaning">
     <div class="clay mean-card">${pic(row, '')}
-      <div class="mean-word">${esc(row[1])}</div>
+      <button class="mean-word" aria-label="${esc(row[1])} 다시 듣기">${esc(row[1])}</button>
       <p class="sentence">${esc(row[4])}</p></div>
     <div class="row">
       <button class="clay big list">${UI[lang].list}</button>
@@ -314,6 +314,7 @@ function meaning(i) {
     puzzle(n);
   };
   app.querySelector('.mean-card').onclick = () => play(`${lang}/${slug(lang, row[1])}-s.wav`, row[4]);
+  app.querySelector('.mean-word').onclick = e => { e.stopPropagation(); sayWord(row[1]); };
   (async () => {
     await sayPhrase('great');
     if (scene === my) play(`${lang}/${slug(lang, row[1])}-s.wav`, row[4]);

@@ -1,5 +1,5 @@
 // 오프라인: 앱 파일은 설치 때, 소리·글꼴은 처음 쓸 때 저장한다. 파일을 고치면 VERSION을 올린다.
-const VERSION = 'ee203e0693';
+const VERSION = 'c53946e1e3';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'words.json', 'manifest.webmanifest', 'icon-180.png',
   'img/excavator.jpg', 'img/bulldozer.jpg', 'img/loader.jpg', 'img/forklift.jpg', 'img/tower-crane.jpg',
   'img/dump-truck.jpg', 'img/roller.jpg'];
