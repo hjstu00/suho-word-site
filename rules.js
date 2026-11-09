@@ -53,8 +53,8 @@ export const PHONICS_FIX = {
   apple: 'a p p l silent',
   flower: 'f l ow ow er er',
   umbrella: 'u m b r e l l uh',
-  grandma: 'g r a n d m a',
-  grandpa: 'g r a n d p a',
+  grandma: 'g r a n d m o', // 끝 a는 /ɑ/ (octopus의 o 소리)
+  grandpa: 'g r a n d p o',
   igloo: 'i g l oo oo',
   helmet: 'h e l m uh t',
   ladder: 'l a d d er er',
