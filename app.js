@@ -70,6 +70,13 @@ function sfx(notes) {
     }
   } catch { /* 효과음은 없어도 진행 */ }
 }
+// 배경 음악: audio/music/bg.mp3 가 있으면 퍼즐 중에만 작게 반복 (원작처럼 음량 낮게). 파일이 없으면 조용히 넘어간다
+const bgm = new Audio('audio/music/bg.mp3');
+bgm.loop = true;
+bgm.volume = 0.15;
+let bgmMissing = false;
+bgm.onerror = () => { bgmMissing = true; };
+const music = on => on && !bgmMissing ? bgm.play().catch(() => {}) : bgm.pause();
 const sayWord = w => play(`${lang}/${slug(lang, w)}.wav`, w);
 const sayPhrase = k => play(`${lang}/p-${k}.wav`, DATA.phrases[lang][k]);
 const saySnd = snd => snd.path ? play(snd.path, snd.text) : (stopAudio(), sfx(SFX.pop), wait(250));
@@ -93,12 +100,12 @@ const friends = (text, cls = '') => [...text].map((c, k) => c === ' '
   ? '<span class="gap"></span>'
   : `<span class="friend c${k % 6} ${cls}" style="--d:${k}">${esc(c)}</span>`).join('');
 const wait = ms => new Promise(r => setTimeout(r, ms));
-const newScene = () => { stopAudio(); return ++scene; };
+const newScene = () => { stopAudio(); music(false); return ++scene; };
 
 // ---- S01 시작 ----
 function intro() {
   newScene();
-  const imgs = ['excavator', 'bulldozer', 'loader', 'forklift', 'tower-crane', 'dump-truck', 'roller'];
+  const imgs = ['excavator', 'bulldozer', 'loader', 'forklift', 'tower-crane', 'dump-truck', 'roller', 'tesla'];
   app.innerHTML = `<section class="screen intro">
     <h1 class="title awake" aria-label="${TITLE}">${friends(TITLE, 'dance')}</h1>
     <div class="parade" aria-hidden="true"><div class="parade-track">${imgs.map(n => `<img src="img/${n}.jpg" alt="">`).join('')}</div></div>
@@ -160,6 +167,7 @@ function picker() {
 // 한글은 음절 블록 또는 자모(초성·중성·종성 칸이 다 차면 음절로 합쳐짐), 영어는 글자마다 파닉스 소리
 function puzzle(i) {
   const my = newScene();
+  music(true);
   lastI = i;
   const row = DATA[lang][i], word = row[1];
   const { mode, tokens } = units(lang, row, SOUNDS);
