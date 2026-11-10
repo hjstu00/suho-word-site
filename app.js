@@ -13,10 +13,16 @@ const HINT_MS = 7000; // 가만히 있으면 이만큼 뒤 글자 하나가 통�
 let DATA, SOUNDS, lang = 'ko', scene = 0, order = [], lastI = null, greeted = false;
 
 // ---- 소리: 녹음 파일, 없으면 기기 음성 ----
-const player = new Audio();
-let finishCurrent = null;
+// 목소리도 배경 음악과 같은 Web Audio로 튼다: iPad에서 <audio>와 Web Audio를 같이 쓰면 한쪽이 멈춘다(제이커 인사가 끊김)
+let actx, voice = null, finishCurrent = null;
+function audioCtx() {
+  actx ||= new (window.AudioContext || window.webkitAudioContext)();
+  actx.resume().catch(() => {});
+  return actx;
+}
 function stopAudio() {
-  player.pause();
+  try { voice?.stop(); } catch { /* 이미 끝남 */ }
+  voice = null;
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   finishCurrent?.(false);
 }
@@ -36,18 +42,27 @@ function play(path, text, l = lang) {
       if (settled) return;
       settled = true;
       finishCurrent = null;
-      player.onended = player.onerror = null;
       resolve(ok);
     };
     finishCurrent = finish;
-    player.onended = () => finish(true);
-    player.onerror = () => { player.onerror = null; speak(text, l, finish); };
-    player.src = `audio/${path}`;
-    player.play().catch(e => { if (e.name === 'NotAllowedError') speak(text, l, finish); });
+    let c;
+    try { c = audioCtx(); } catch { return speak(text, l, finish); }
+    fetch(`audio/${path}`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+      .then(b => new Promise((ok, no) => c.decodeAudioData(b, ok, no)))
+      .then(buf => {
+        if (settled) return;
+        const s = c.createBufferSource();
+        s.buffer = buf;
+        s.connect(c.destination);
+        s.onended = () => finish(true);
+        voice = s;
+        s.start();
+      })
+      .catch(() => { if (!settled) speak(text, l, finish); }); // 파일이 없으면 기기 음성
   });
 }
 // 짧은 효과음: 녹음 없이 브라우저에서 합성 [주파수, 시작초, 길이초]
-let actx;
 const SFX = {
   nope: [[392, 0, .16], [311, .14, .32]],
   cheer: [[523, 0, .14], [659, .11, .14], [784, .22, .14], [1047, .33, .4]],
@@ -55,7 +70,7 @@ const SFX = {
 };
 function sfx(notes) {
   try {
-    actx ||= new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx();
     const t0 = actx.currentTime;
     for (const [f, s, d] of notes) {
       const o = actx.createOscillator(), g = actx.createGain();
@@ -80,8 +95,7 @@ let bgStarted = false;
 async function music() {
   if (document.hidden) return;
   try {
-    actx ||= new (window.AudioContext || window.webkitAudioContext)();
-    actx.resume(); // 누를 때마다 깨운다 (앱을 다시 열면 iPad가 소리를 재워 둠)
+    audioCtx(); // 누를 때마다 깨운다 (앱을 다시 열면 iPad가 소리를 재워 둠)
     if (bgStarted) return;
     bgStarted = true;
     const buf = await bgFile.then(b => b && new Promise((ok, no) => actx.decodeAudioData(b, ok, no)));
