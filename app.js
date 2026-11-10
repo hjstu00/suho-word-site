@@ -70,13 +70,33 @@ function sfx(notes) {
     }
   } catch { /* 효과음은 없어도 진행 */ }
 }
-// 배경 음악: audio/music/bg.mp3 가 있으면 퍼즐 중에만 작게 반복 (원작처럼 음량 낮게). 파일이 없으면 조용히 넘어간다
-const bgm = new Audio('audio/music/bg.mp3');
-bgm.loop = true;
-bgm.volume = 0.1;
-let bgmMissing = false;
-bgm.onerror = () => { bgmMissing = true; };
-const music = on => on && !bgmMissing ? bgm.play().catch(() => {}) : bgm.pause();
+// 배경 음악: audio/music/bg.mp3 를 퍼즐 중에만 작게 반복. 파일이 없으면 조용히 넘어간다.
+// Web Audio로 튼다: iPad는 <audio>를 하나만 틀어(목소리가 나오면 음악이 멈춤) 음량도 못 바꾸기 때문
+const BGM_VOLUME = 0.1;
+if (navigator.audioSession) navigator.audioSession.type = 'playback'; // iPad 무음 스위치에도 들리게 (Safari 17+)
+const bgFile = fetch('audio/music/bg.mp3').then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
+let bgReady = null, bgSrc = null;
+async function music(on) {
+  bgSrc?.stop();
+  bgSrc = null;
+  if (!on) return;
+  const my = scene;
+  try {
+    actx ||= new (window.AudioContext || window.webkitAudioContext)();
+    actx.resume(); // 누른 순간에 불러야 iPad가 소리를 허락한다 (await 앞)
+    bgReady ||= bgFile.then(b => b && new Promise((ok, no) => actx.decodeAudioData(b, ok, no)));
+    const buf = await bgReady;
+    if (!buf || scene !== my || bgSrc) return;
+    const gain = actx.createGain();
+    gain.gain.value = BGM_VOLUME;
+    gain.connect(actx.destination);
+    bgSrc = actx.createBufferSource();
+    bgSrc.buffer = buf;
+    bgSrc.loop = true;
+    bgSrc.connect(gain);
+    bgSrc.start();
+  } catch { /* 음악은 없어도 진행 */ }
+}
 const sayWord = w => play(`${lang}/${slug(lang, w)}.wav`, w);
 const sayPhrase = k => play(`${lang}/p-${k}.wav`, DATA.phrases[lang][k]);
 const saySnd = snd => snd.path ? play(snd.path, snd.text) : (stopAudio(), sfx(SFX.pop), wait(250));
