@@ -70,33 +70,34 @@ function sfx(notes) {
     }
   } catch { /* 효과음은 없어도 진행 */ }
 }
-// 배경 음악: audio/music/bg.mp3 를 퍼즐 중에만 작게 반복. 파일이 없으면 조용히 넘어간다.
-// Web Audio로 튼다: iPad는 <audio>를 하나만 틀어(목소리가 나오면 음악이 멈춤) 음량도 못 바꾸기 때문
+// 배경 음악: audio/music/bg.mp3 를 처음 누른 순간부터 모든 화면에서 작게 반복. 파일이 없으면 조용히 넘어간다.
+// Web Audio로 튼다: iPad는 <audio>를 하나만 틀어(목소리가 나오면 음악이 멈춤) 음량도 못 바꾸기 때문.
+// iPad는 화면을 누르기 전에는 소리를 못 내므로 앱을 연 순간이 아니라 첫 누름에 시작한다.
 const BGM_VOLUME = 0.1;
 if (navigator.audioSession) navigator.audioSession.type = 'playback'; // iPad 무음 스위치에도 들리게 (Safari 17+)
 const bgFile = fetch('audio/music/bg.mp3').then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
-let bgReady = null, bgSrc = null;
-async function music(on) {
-  bgSrc?.stop();
-  bgSrc = null;
-  if (!on) return;
-  const my = scene;
+let bgStarted = false;
+async function music() {
+  if (document.hidden) return;
   try {
     actx ||= new (window.AudioContext || window.webkitAudioContext)();
-    actx.resume(); // 누른 순간에 불러야 iPad가 소리를 허락한다 (await 앞)
-    bgReady ||= bgFile.then(b => b && new Promise((ok, no) => actx.decodeAudioData(b, ok, no)));
-    const buf = await bgReady;
-    if (!buf || scene !== my || bgSrc) return;
+    actx.resume(); // 누를 때마다 깨운다 (앱을 다시 열면 iPad가 소리를 재워 둠)
+    if (bgStarted) return;
+    bgStarted = true;
+    const buf = await bgFile.then(b => b && new Promise((ok, no) => actx.decodeAudioData(b, ok, no)));
+    if (!buf) return;
     const gain = actx.createGain();
     gain.gain.value = BGM_VOLUME;
     gain.connect(actx.destination);
-    bgSrc = actx.createBufferSource();
-    bgSrc.buffer = buf;
-    bgSrc.loop = true;
-    bgSrc.connect(gain);
-    bgSrc.start();
+    const src = actx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.connect(gain);
+    src.start();
   } catch { /* 음악은 없어도 진행 */ }
 }
+for (const ev of ['touchend', 'click', 'keydown']) addEventListener(ev, music, { passive: true });
+document.addEventListener('visibilitychange', () => { if (document.hidden) actx?.suspend(); else actx?.resume().catch(() => {}); });
 const sayWord = w => play(`${lang}/${slug(lang, w)}.wav`, w);
 const sayPhrase = k => play(`${lang}/p-${k}.wav`, DATA.phrases[lang][k]);
 const saySnd = snd => snd.path ? play(snd.path, snd.text) : (stopAudio(), sfx(SFX.pop), wait(250));
@@ -120,7 +121,7 @@ const friends = (text, cls = '') => [...text].map((c, k) => c === ' '
   ? '<span class="gap"></span>'
   : `<span class="friend c${k % 6} ${cls}" style="--d:${k}">${esc(c)}</span>`).join('');
 const wait = ms => new Promise(r => setTimeout(r, ms));
-const newScene = () => { stopAudio(); music(false); return ++scene; };
+const newScene = () => { stopAudio(); return ++scene; };
 
 // ---- S01 시작 ----
 function intro() {
@@ -187,7 +188,6 @@ function picker() {
 // 한글은 음절 블록 또는 자모(초성·중성·종성 칸이 다 차면 음절로 합쳐짐), 영어는 글자마다 파닉스 소리
 function puzzle(i) {
   const my = newScene();
-  music(true);
   lastI = i;
   const row = DATA[lang][i], word = row[1];
   const { mode, tokens } = units(lang, row, SOUNDS);
