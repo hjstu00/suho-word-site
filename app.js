@@ -105,7 +105,7 @@ const newScene = () => { stopAudio(); music(false); return ++scene; };
 // ---- S01 시작 ----
 function intro() {
   newScene();
-  const imgs = ['excavator', 'bulldozer', 'loader', 'forklift', 'tower-crane', 'dump-truck', 'roller', 'tesla'];
+  const imgs = ['excavator', 'breaker', 'bulldozer', 'loader', 'forklift', 'tower-crane', 'dump-truck', 'roller', 'tesla'];
   app.innerHTML = `<section class="screen intro">
     <h1 class="title awake" aria-label="${TITLE}">${friends(TITLE, 'dance')}</h1>
     <div class="parade" aria-hidden="true"><div class="parade-track">${imgs.map(n => `<img src="img/${n}.jpg" alt="">`).join('')}</div></div>
