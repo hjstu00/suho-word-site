@@ -73,7 +73,7 @@ function sfx(notes) {
 // 배경 음악: audio/music/bg.mp3 가 있으면 퍼즐 중에만 작게 반복 (원작처럼 음량 낮게). 파일이 없으면 조용히 넘어간다
 const bgm = new Audio('audio/music/bg.mp3');
 bgm.loop = true;
-bgm.volume = 0.15;
+bgm.volume = 0.1;
 let bgmMissing = false;
 bgm.onerror = () => { bgmMissing = true; };
 const music = on => on && !bgmMissing ? bgm.play().catch(() => {}) : bgm.pause();
